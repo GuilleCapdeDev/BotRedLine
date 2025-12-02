@@ -1,10 +1,10 @@
-import expressModule from "express";
-
-const express = expressModule.default ?? expressModule; // compatibilidad ESM
+import express from "express";
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
 app.get("/", (req, res) => res.send("Bot activo y autosustentable"));
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Servidor web keep-alive iniciado en puerto ${PORT}`));
+
+export default app;
