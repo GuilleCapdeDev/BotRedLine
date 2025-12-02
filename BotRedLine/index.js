@@ -1,0 +1,183 @@
+require("dotenv").config();
+require("./keep_alive.js");
+const fs = require("fs");
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+
+// Crear cliente
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+  partials: [Partials.Channel],
+});
+
+// IDs de canales
+const fichajeChannelId = process.env.FICHAJE_CHANNEL_ID;
+const weeklyChannelId = process.env.WEEKLY_CHANNEL_ID;
+const MAX_HOURS = 6; // horas máximas por fichaje
+
+let buttonsMessageId = null;
+
+// --- Datos persistentes ---
+let data = {
+  userClockData: {},  // Entradas activas
+  weeklyHours: {}     // Horas acumuladas
+};
+
+// Cargar datos si existe
+if (fs.existsSync("data.json")) {
+  const saved = JSON.parse(fs.readFileSync("data.json"));
+  data = { ...data, ...saved };
+}
+
+// Guardar datos
+function saveData() {
+  fs.writeFileSync("data.json", JSON.stringify(data, null, 2));
+}
+
+// Keep-alive para Replit
+const express = require("express");
+const app = express();
+app.get("/", (req, res) => res.send("Bot activo y autosustentable"));
+app.listen(3000, () => console.log("Servidor web keep-alive iniciado"));
+
+// --- Bot listo ---
+client.once("ready", async () => {
+  console.log(`🤖 Bot conectado como: ${client.user.tag}`);
+
+  const fichajeChannel = await client.channels.fetch(fichajeChannelId).catch(() => null);
+  if (!fichajeChannel) return console.log("❌ Canal FICHAJE no encontrado!");
+
+  // Botones
+  const botones = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("entrada")
+      .setLabel("📥 Fichar Entrada")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("salida")
+      .setLabel("📤 Fichar Salida")
+      .setStyle(ButtonStyle.Danger),
+  );
+
+  // Enviar botón solo si no existe
+  let mensajes = await fichajeChannel.messages.fetch({ limit: 10 });
+  let botonesMsg = mensajes.find(m => m.author.id === client.user.id && m.components.length > 0);
+
+  if (!botonesMsg) {
+    const msg = await fichajeChannel.send({ content: "\u200b", components: [botones] });
+    await msg.pin();
+    buttonsMessageId = msg.id;
+    console.log("📌 Botones enviados y fijados en FICHAJE.");
+  } else {
+    buttonsMessageId = botonesMsg.id;
+    console.log("📌 Mensaje de botones ya existente.");
+  }
+
+  // Revisar fichajes abiertos > MAX_HOURS
+  setInterval(async () => {
+    const weeklyChannel = await client.channels.fetch(weeklyChannelId).catch(() => null);
+    if (!weeklyChannel) return;
+
+    const now = Date.now();
+    for (const [userId, entrada] of Object.entries(data.userClockData)) {
+      if (now - entrada >= MAX_HOURS * 60 * 60 * 1000) {
+        delete data.userClockData[userId];
+        saveData();
+
+        const guild = client.guilds.cache.first();
+        const member = await guild.members.fetch(userId).catch(() => null);
+        const displayName = member ? member.displayName : userId;
+
+        weeklyChannel.send(
+          `⚠️ **${displayName}** tenía un fichaje abierto por más de ${MAX_HOURS} horas y fue cerrado automáticamente como infracción.`
+        );
+      }
+    }
+  }, 60 * 1000);
+
+  // Resumen semanal automático (domingo 23:59)
+  const nowDate = new Date();
+  const millisToSunday = (7 - nowDate.getDay()) * 24 * 60 * 60 * 1000 - nowDate.getHours()*3600000 - nowDate.getMinutes()*60000 - nowDate.getSeconds()*1000;
+  setTimeout(() => {
+    sendWeeklySummary();
+    setInterval(sendWeeklySummary, 7 * 24 * 60 * 60 * 1000);
+  }, millisToSunday);
+});
+
+// --- Función resumen semanal ---
+async function sendWeeklySummary() {
+  const weeklyChannel = await client.channels.fetch(weeklyChannelId).catch(() => null);
+  if (!weeklyChannel) return;
+
+  if (Object.keys(data.weeklyHours).length === 0) {
+    return weeklyChannel.send("📝 No hay registros de horas esta semana.");
+  }
+
+  const guild = client.guilds.cache.first();
+  let lines = [];
+
+  for (const [userId, ms] of Object.entries(data.weeklyHours)) {
+    const member = await guild.members.fetch(userId).catch(() => null);
+    const displayName = member ? member.displayName : userId;
+    const hours = Math.floor(ms / (1000 * 60 * 60));
+    const minutes = Math.floor((ms / (1000 * 60)) % 60);
+    lines.push(`- ${displayName}: ${hours}h ${minutes}m`);
+  }
+
+  const summary = "🗓️ Resumen semanal de horas trabajadas:\n" + lines.join("\n");
+  weeklyChannel.send(summary);
+
+  data.weeklyHours = {}; // reset semanal
+  saveData();
+}
+
+// --- Manejo de botones ---
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isButton()) return;
+  const userId = interaction.user.id;
+  const weeklyChannel = await client.channels.fetch(weeklyChannelId).catch(() => null);
+  if (!weeklyChannel) return;
+
+  const guild = interaction.guild;
+  const member = await guild.members.fetch(userId).catch(() => null);
+  const displayName = member ? member.displayName : interaction.user.username;
+
+  const now = Date.now();
+
+  if (interaction.customId === "entrada") {
+    if (data.userClockData[userId]) {
+      return interaction.reply({ content: "⚠️ Ya tienes una entrada activa.", ephemeral: true });
+    }
+    data.userClockData[userId] = now;
+    saveData();
+    return interaction.reply({ content: "📥 ¡Entrada fichada!", ephemeral: true });
+  }
+
+  if (interaction.customId === "salida") {
+    const entrada = data.userClockData[userId];
+    if (!entrada) {
+      return interaction.reply({ content: "⚠️ No registré tu entrada.", ephemeral: true });
+    }
+
+    const workedMs = now - entrada;
+    delete data.userClockData[userId];
+
+    if (data.weeklyHours[userId]) {
+      data.weeklyHours[userId] += workedMs;
+    } else {
+      data.weeklyHours[userId] = workedMs;
+    }
+    saveData();
+
+    const hours = Math.floor(workedMs / (1000 * 60 * 60));
+    const minutes = Math.floor((workedMs / (1000 * 60)) % 60);
+
+    await interaction.reply({ content: "📤 ¡Salida fichada!", ephemeral: true });
+    await weeklyChannel.send(`🕒 **${displayName}** ha trabajado **${hours}h ${minutes}m** hoy.`);
+  }
+});
+
+client.login(process.env.DISCORD_TOKEN);
