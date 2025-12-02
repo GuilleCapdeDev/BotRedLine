@@ -1,4 +1,4 @@
-const express = require("express");
+const express = import("express");
 const app = express();
 
 // Ruta principal
@@ -10,3 +10,4 @@ app.get("/", (req, res) => {
 app.listen(3000, () => {
   console.log("Servidor web de keep-alive iniciado en puerto 3000");
 });
+
