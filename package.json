@@ -1,9 +1,9 @@
 {
-  "name": "bot-redline",
+  "name": "redline-bot",
   "version": "1.0.0",
-  "description": "Bot de fichajes RedLine",
+  "description": "Bot de fichajes RedLine listo para deploy",
   "main": "index.js",
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
@@ -11,8 +11,8 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-  "discord.js": "^14.11.0",
-  "dotenv": "^17.2.3",
-  "express": "^4.18.2"
+    "discord.js": "^15.9.0",
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2"
   }
 }
